@@ -17,7 +17,7 @@ if __name__ == '__main__':
     # 0 ms_stream means that the frame will be sent to the server
     # right after the rendering
     ms_interaction = 1
-    ms_stream = 0 
+    ms_stream = 16
     # max number of interactions to be stored inside the queue
     max_queue_size = 1000
     ##############################################################################
@@ -67,7 +67,7 @@ if __name__ == '__main__':
     showm.initialize()
 
     stream = FuryStreamClient(
-        showm, window_size,max_window_size=max_window_size)
+        showm, window_size, max_window_size=max_window_size)
     # linux
     # p = multiprocessing.Process(
     #     target=webrtc_server,
@@ -76,7 +76,9 @@ if __name__ == '__main__':
     p = multiprocessing.Process(
         target=webrtc_server,
         args=(
-            None, stream.image_buffers, stream.info_buffer,
+            None, stream.image_buffers,
+            stream.image_buffer_names,
+            stream.info_buffer,
             None,)
     )
     p.start()
@@ -92,5 +94,9 @@ if __name__ == '__main__':
     stream_interaction.start(ms=ms_interaction)
     stream.init(ms_stream,)
     showm.start()
+    p.kill()
+    p2.kill()
+    stream.cleanup()
+
     # open a browser using the following the url
     # http://localhost:8000?interaction_addr=localhost:8080

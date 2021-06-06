@@ -1,25 +1,34 @@
 from os.path import join as pjoin
 from fury import actor, window, colormap as cmap
 import numpy as np
-
-###############################################################################
-# Then let's download some available datasets.
-
+import time
 
 import multiprocessing
 from fury.stream.servers.webrtc.server import webrtc_server
 from fury.stream.client import FuryStreamClient, FuryStreamInteraction
 
+# note, if python version is equal or higher than 3.8
+# uses shared memory approach
 if __name__ == '__main__':
-
-    window_size = (400, 400)
-    max_window_size = (700, 700)
+    # se estiver usando python 3.8 e quiser testar o 
+    # raw_array sete use_raw_array=False. 
+    # se estiver usando pytho n3.8 por default escolhe shared memory
+    use_raw_array = None
+    use_high_res = False
+    if use_high_res:
+        window_size = (1280, 720)
+        max_window_size = (1920, 1080)
+    else:
+        window_size = (720, 500)
+        max_window_size = (600, 600)
     # 0 ms_stream means that the frame will be sent to the server
     # right after the rendering
-    ms_interaction = 1
-    ms_stream = 0
+
+    ms_interaction = 10
+    ms_stream = 16
+
     # max number of interactions to be stored inside the queue
-    max_queue_size = 1000
+    max_queue_size = 10
     ######################################################################
     centers = 1*np.array([
         [0, 0, 0],
@@ -63,11 +72,12 @@ if __name__ == '__main__':
     # Otherwise, if ms it's equal to zero the shared memory it's updated in each 
     # render event
     # showm.window.SetOffScreenRendering(1)
-    #showm.window.EnableRenderOff()
+    # showm.window.EnableRenderOff()
     showm.initialize()
 
     stream = FuryStreamClient(
-        showm, window_size, max_window_size=max_window_size)
+        showm, window_size, max_window_size=max_window_size,
+        use_raw_array=use_raw_array)
     stream_interaction = FuryStreamInteraction(
         showm, max_queue_size=max_queue_size, fury_client=stream)
     # linux
@@ -75,16 +85,22 @@ if __name__ == '__main__':
     #     target=webrtc_server,
     #     args=(stream, None, None, circular_queue))
     # osx,
+
     p = multiprocessing.Process(
         target=webrtc_server,
         args=(
-            None, stream.image_buffers, stream.info_buffer,
+            None, stream.image_buffers,
+            stream.image_buffer_names,
+            stream.info_buffer,
             None,
-            stream_interaction.circular_queue.head_tail_buffer, 
+            stream_interaction.circular_queue.head_tail_buffer,
             stream_interaction.circular_queue.buffers._buffers))
     p.start()
     stream_interaction.start(ms=ms_interaction)
     stream.init(ms_stream,)
     showm.start()
+    p.kill()
+    stream.cleanup()
+
     # open a browser using the following the url
     # http://localhost:8000/

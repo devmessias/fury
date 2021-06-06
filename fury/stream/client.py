@@ -1,8 +1,14 @@
-from fury import window
-import os
 from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtk
 import vtk
 import multiprocessing
+import sys
+if sys.version_info.minor >= 8:
+    from multiprocessing import shared_memory
+    PY_VERSION_8 = False
+else:
+    shared_memory = None
+    PY_VERSION_8 = False
+
 import numpy as np
 
 from fury.stream.tools import CircularQueue
@@ -14,6 +20,7 @@ class FuryStreamClient:
             self, showm,
             window_size=(200, 200),
             max_window_size=None,
+            use_raw_array=None,
             buffer_count=2,
             image_buffers=None,
             info_buffer=None):
@@ -29,6 +36,8 @@ class FuryStreamClient:
         self.window2image_filter.SetInput(self.showm.window)
         # self.write_in_stdout = write_in_stdout
         self.image_buffers = []
+        self.image_buffer_names = []
+        self.image_reprs = []
         self.buffer_count = buffer_count
         if max_window_size is None:
             max_window_size = window_size
@@ -37,7 +46,16 @@ class FuryStreamClient:
         if self.max_size < window_size[0]*window_size[1]:
             raise ValueError('max_window_size must be greater than window_size')
 
-        if info_buffer is None or image_buffers is None:
+        # se use_raw_array não é setado escolhe a abordagem
+        # automaticamente
+        if use_raw_array is None:
+            use_raw_array = not PY_VERSION_8
+
+        if not PY_VERSION_8 and not use_raw_array:
+            raise ValueError("""
+                In order to use the SharedMemory approach
+                you should have to use python 3.8 or higher""")
+        if info_buffer is None:
             # 0 number of components
             # 1 id buffer
             # 2, 3, width first buffer, height first buffer
@@ -49,20 +67,40 @@ class FuryStreamClient:
             self.info_buffer = multiprocessing.RawArray(
                     'I', info_list
             )
-            for _ in range(self.buffer_count):
-                self.image_buffers.append(multiprocessing.RawArray(
-                    'B', np.random.randint(
-                        0, 255,
-                        size=max_window_size[0]*max_window_size[1]*3).astype('uint8')))
+        if use_raw_array:
+            self.image_buffer_names = None
+            if image_buffers is None:
+                self.image_memory_views = []
+                for _ in range(self.buffer_count):
+                    buffer = multiprocessing.RawArray(
+                        'B', np.random.randint(
+                            0, 255,
+                            size=max_window_size[0]*max_window_size[1]*3)
+                        .astype('uint8'))
+                    self.image_buffers.append(buffer)
+                    self.image_memory_views.append(
+                        np.ctypeslib.as_array(buffer))
+            else:
+                self.info_buffer = info_buffer
+                self.image_buffers = image_buffers
+                # do not work anymore with shared memory
         else:
-            self.info_buffer = info_buffer
-            self.image_buffers = image_buffers
+            for _ in range(self.buffer_count):
+                bufferSize = max_window_size[0]*max_window_size[1]*3
+                buffer = shared_memory.SharedMemory(
+                    create=True, size=bufferSize)
+                self.image_buffers.append(buffer)
+                self.image_reprs.append(
+                    np.ndarray(
+                        bufferSize, dtype=np.uint8, buffer=buffer.buf))
+                self.image_buffer_names.append(buffer.name)
 
         self._id_timer = None
         self._id_observer = None
         self.sender = None
         self._in_request = False
         self.update = True
+        self.use_raw_array = use_raw_array
         # if broker_url is not None:
         #    pass
         # self.sender = imagezmq.ImageSender(connect_to=broker_url)
@@ -82,30 +120,55 @@ class FuryStreamClient:
                 self.window2image_filter.Modified()
                 vtk_image = window2image_filter.GetOutput()
                 vtk_array = vtk_image.GetPointData().GetScalars()
-                np_arr = vtk_to_numpy(vtk_array).astype('uint8')
-                h, w, _ = vtk_image.GetDimensions()
-                num_components = vtk_array.GetNumberOfComponents()
+                # num_components = vtk_array.GetNumberOfComponents()
+                if self.use_raw_array:
+                    h, w, _ = vtk_image.GetDimensions()
+                    #np_arr = vtk_to_numpy(vtk_array).astype('uint8')
+                    np_arr = np.frombuffer(vtk_array, dtype='uint8')
+                    #np_arr = np_arr.flatten()
+                else:
+                    w, h, _ = vtk_image.GetDimensions()
+                    np_arr = np.frombuffer(vtk_array, dtype=np.uint8)
 
                 if self.image_buffers is not None:
                     buffer_size = int(h*w)
-                    
-                    self.info_buffer[0] = num_components
-                    np_arr = np_arr.flatten()
+
+                    # self.info_buffer[0] = num_components
+
                     # N-Buffering
                     next_buffer_index = (self.info_buffer[1]+1) \
                         % self.buffer_count
                     # print(next_buffer_index)
                     # 2, 4, 6
-                    
                     if buffer_size == self.max_size:
-                        self.image_buffers[next_buffer_index][:] = np_arr
+                        if self.use_raw_array:
+                            # throws a type error due uint8
+                            # memoryview(
+                            #     self.image_buffers[next_buffer_index]
+                            # )[:] = np_arr
+                            self.image_memory_views[
+                                next_buffer_index][:] = np_arr
+                        else:
+                            self.image_reprs[next_buffer_index][:] = np_arr
                     elif buffer_size < self.max_size:
-                        self.image_buffers[next_buffer_index][0:buffer_size*3] = np_arr
+                        if self.use_raw_array:
+                            self.image_memory_views[
+                               next_buffer_index][0:buffer_size*3] = np_arr
+                            # memoryview(self.image_buffers[
+                            #     next_buffer_index])[0:buffer_size*3] = np_arr
+                        else:
+                            self.image_reprs[
+                                next_buffer_index][0:buffer_size*3] = np_arr
                     else:
                         rand_img = np.random.randint(
                             0, 255, size=self.max_size*3,
                             dtype='uint8')
-                        self.image_buffers[next_buffer_index][:] = rand_img
+                        if self.use_raw_array:
+                            self.image_memory_views[
+                                next_buffer_index][:] = rand_img
+                        else:
+                            self.image_reprs[
+                                next_buffer_index][:] = rand_img
                         w = self.max_window_size[0]
                         h = self.max_window_size[1]
                     self.info_buffer[2+next_buffer_index*2] = w
@@ -123,6 +186,12 @@ class FuryStreamClient:
             self._id_observer = id_observer
         self.showm.render()
         callback(None, None)
+
+    def cleanup(self):
+        if self.image_buffer_names is not None:
+            for buffer in self.image_buffers:
+                buffer.close()
+                buffer.unlink()
 
     def stop(self):
         if self._id_timer is not None:
@@ -188,7 +257,7 @@ class FuryStreamInteraction:
                     self.iren.SetEventInformation(
                         newX, newY, ctrl_key, shift_key,
                         chr(0), 0, None)
-                    
+
                     mouse_actions = {
                         3: self.showm.iren.LeftButtonPressEvent,
                         4: self.showm.iren.LeftButtonReleaseEvent,
@@ -202,9 +271,9 @@ class FuryStreamInteraction:
                     # self.iren.SetLastEventPosition(newX, newY)
                     self.showm.window.Modified()
                 # maybe when the fury host rendering is disabled
-                #self.fury_client.window2image_filter.Update()
-                #self.fury_client.window2image_filter.Modified()
-                #self.showm.render()
+                # self.fury_client.window2image_filter.Update()
+                # self.fury_client.window2image_filter.Modified()
+                # self.showm.render()
 
         self._id_timer = self.showm.add_timer_callback(True, ms, callback)
 

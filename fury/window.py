@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os
+
 import gzip
 from warnings import warn
 
@@ -7,7 +7,6 @@ import numpy as np
 from scipy import ndimage
 import vtk
 from vtk.util import numpy_support, colors
-from vtk.util.numpy_support import vtk_to_numpy
 
 from tempfile import TemporaryDirectory as InTemporaryDirectory
 
@@ -1147,5 +1146,3 @@ def enable_stereo(renwin, stereo_type):
         stereo_type = 'horizontal'
 
     renwin.SetStereoType(stereo_type_dictionary[stereo_type])
-
-

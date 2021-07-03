@@ -15,7 +15,7 @@ from fury.decorators import is_osx
 from fury.interactor import CustomInteractorStyle
 from fury.io import load_image, save_image
 from fury.utils import asbytes
-
+from fury.shaders.base import GL_NUMBERS as _GL
 try:
     basestring
 except NameError:
@@ -1008,3 +1008,86 @@ def enable_stereo(renwin, stereo_type):
         stereo_type = 'horizontal'
 
     renwin.SetStereoType(stereo_type_dictionary[stereo_type])
+
+
+def gl_get_current_state(glState):
+    """Returns a dict which describes the current state of the opengl
+    context
+    """
+    state_description = {
+        glName: glState.GetEnumState(glNumber)
+        for glName, glNumber in _GL.items()
+    }
+    return state_description
+
+
+def gl_reset_blend(glState):
+    """Redefines the state of the OpenGL context related with how the RGBA
+    channels will be combined.
+
+    See more
+    ---------
+    [1] https://www.khronos.org/registry/OpenGL-Refpages/gl4/html/glBlendEquation.xhtml
+    [2] https://www.khronos.org/registry/OpenGL-Refpages/gl4/html/glBlendFunc.xhtml
+    vtk specification:
+    [3] https://gitlab.kitware.com/vtk/vtk/-/blob/master/Rendering/OpenGL2/vtkOpenGLState.cxx#L1705
+    """  # noqa
+    glState.ResetGLBlendEquationState()
+    glState.ResetGLBlendFuncState()
+
+
+def gl_enable_depth(glState):
+    glState.vtkglEnable(_GL['GL_DEPTH_TEST'])
+
+
+def gl_disable_depth(glState):
+    glState.vtkglDisable(_GL['GL_DEPTH_TEST'])
+
+
+def gl_enable_blend(glState):
+    glState.vtkglEnable(_GL['GL_BLEND'])
+
+
+def gl_disable_blend(glState):
+    """This it will disable any gl behavior which has no
+    function for opaque objects. This has the benefit of
+    speeding up the rendering of the image.
+
+    See more
+    --------
+    [1] https://www.khronos.org/registry/OpenGL-Refpages/gl4/html/glFrontFace.xhtml
+    """  # noqa
+
+    glState.vtkglDisable(_GL['GL_CULL_FACE'])
+    glState.vtkglDisable(_GL['GL_BLEND'])
+
+
+def gl_set_additive_blending(glState, dark_background=True):
+    gl_reset_blend(glState)
+    glState.vtkglEnable(_GL['GL_BLEND'])
+    glState.vtkglDisable(_GL['GL_DEPTH_TEST'])
+    if dark_background:
+        glState.vtkglBlendFunc(_GL['GL_SRC_ALPHA'], _GL['GL_ONE'])
+    else:
+        glState.vtkglBlendFuncSeparate(
+             _GL['GL_SRC_ALPHA'], _GL['GL_ONE_MINUS_SRC_ALPHA'],
+             _GL['GL_ONE'],  _GL['GL_ZERO'])
+
+
+def gl_set_normal_blending(glState):
+    glState.vtkglEnable(_GL['GL_BLEND'])
+    glState.vtkglEnable(_GL['GL_DEPTH_TEST'])
+    glState.vtkglBlendFunc(_GL['GL_ONE'], _GL['GL_ONE'])
+    glState.vtkglBlendFuncSeparate(
+                _GL['GL_SRC_ALPHA'], _GL['GL_ONE_MINUS_SRC_ALPHA'],
+                _GL['GL_ONE'], _GL['GL_ONE_MINUS_SRC_ALPHA'])
+
+
+def gl_set_multiplicative_blending(glState):
+    gl_reset_blend(glState)
+    glState.vtkglBlendFunc(_GL['GL_ZERO'], _GL['GL_SRC_COLOR'])
+
+
+def gl_set_subtractive_blending(glState):
+    gl_reset_blend(glState)
+    glState.vtkglBlendFunc(_GL['GL_ZERO'], _GL['GL_ONE_MINUS_SRC_COLOR'])

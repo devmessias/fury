@@ -109,6 +109,7 @@ class FuryStreamClient:
     def start(self, ms=16,):
         if self._started:
             self.stop()
+        print(ms)
         if ms > 0:
             if self._whithout_iren_start:
                 self._interval_timer = IntervalTimer(

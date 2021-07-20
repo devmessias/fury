@@ -42,7 +42,7 @@ def test_port(host, port):
 
 class Widget:
     def __init__(
-            self, showm, ms_stream=2,
+            self, showm, ms_stream=0,
             ms_interaction=33, queue_size=20,
             host='localhost', port=None,
             encoding='mjpeg', ms_jpeg=33):

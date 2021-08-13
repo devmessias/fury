@@ -16,10 +16,12 @@ from fury.utils import (lines_to_vtk_polydata, set_input, apply_affine,
                         set_polydata_vertices, set_polydata_triangles,
                         shallow_copy, rgb_to_vtk, numpy_to_vtk_matrix,
                         repeat_sources, get_actor_from_primitive,
-                        fix_winding_order)
+                        fix_winding_order, numpy_to_vtk_colors,
+                        one_chanel_to_vtk)
 from fury.io import load_image
 from fury.actors.odf_slicer import OdfSlicerActor
 import fury.primitive as fp
+from fury import text_tools
 
 
 def slicer(data, affine=None, value_range=None, opacity=1.,
@@ -272,7 +274,7 @@ def surface(vertices, faces=None, colors=None, smooth=None, subdivision=3):
             It is an optional parameter, it is computed locally if None
         colors : (N, 3) array
             Specifies the colors associated with each vertex in the
-            vertices array.
+            vertices array. Range should be 0 to 1.
             Optional parameter, if not passed, all vertices
             are colored white
         smooth : string - "loop" or "butterfly"
@@ -299,7 +301,7 @@ def surface(vertices, faces=None, colors=None, smooth=None, subdivision=3):
 
     if colors is not None:
         triangle_poly_data.GetPointData().\
-            SetScalars(numpy_support.numpy_to_vtk(colors))
+            SetScalars(numpy_to_vtk_colors(255 * colors))
 
     if faces is None:
         tri = Delaunay(vertices[:, [0, 1]])
@@ -2499,6 +2501,73 @@ def texture_on_sphere(rgb, theta=60, phi=60, interpolate=True):
     return earthActor
 
 
+def texture_2d(rgb, interp=False):
+    """ Create 2D texture from array
+
+    Parameters
+    ----------
+    rgb : ndarray
+        Input 2D RGB or RGBA array. Dtype should be uint8.
+    interp : bool
+        Interpolate between grid centers. Default True.
+
+    Returns
+    -------
+    vtkTexturedActor
+    """
+
+    arr = rgb
+    Y, X = arr.shape[:2]
+    size = (X, Y)
+    grid = rgb_to_vtk(np.ascontiguousarray(arr))
+
+    texture_polydata = vtk.vtkPolyData()
+    texture_points = vtk.vtkPoints()
+    texture_points.SetNumberOfPoints(4)
+
+    polys = vtk.vtkCellArray()
+    polys.InsertNextCell(4)
+    polys.InsertCellPoint(0)
+    polys.InsertCellPoint(1)
+    polys.InsertCellPoint(2)
+    polys.InsertCellPoint(3)
+    texture_polydata.SetPolys(polys)
+
+    tc = vtk.vtkFloatArray()
+    tc.SetNumberOfComponents(2)
+    tc.SetNumberOfTuples(4)
+    tc.InsertComponent(0, 0, 0.0)
+    tc.InsertComponent(0, 1, 0.0)
+    tc.InsertComponent(1, 0, 1.0)
+    tc.InsertComponent(1, 1, 0.0)
+    tc.InsertComponent(2, 0, 1.0)
+    tc.InsertComponent(2, 1, 1.0)
+    tc.InsertComponent(3, 0, 0.0)
+    tc.InsertComponent(3, 1, 1.0)
+    texture_polydata.GetPointData().SetTCoords(tc)
+
+    texture_points.SetPoint(0, 0, 0, 0.0)
+    texture_points.SetPoint(1, size[0], 0, 0.0)
+    texture_points.SetPoint(2, size[0], size[1], 0.0)
+    texture_points.SetPoint(3, 0, size[1], 0.0)
+    texture_polydata.SetPoints(texture_points)
+
+    texture_mapper = vtk.vtkPolyDataMapper2D()
+    texture_mapper = set_input(texture_mapper,
+                               texture_polydata)
+
+    act = vtk.vtkTexturedActor2D()
+    act.SetMapper(texture_mapper)
+
+    tex = vtk.vtkTexture()
+    tex.SetInputDataObject(grid)
+    if interp:
+        tex.InterpolateOn()
+    tex.Update()
+    act.SetTexture(tex)
+    return act
+
+
 def sdf(centers, directions=(1, 0, 0), colors=(1, 0, 0), primitives='torus',
         scales=1):
     """Create a SDF primitive based actor
@@ -2665,6 +2734,106 @@ def markers(
             sq_actor, partial(
                 callback, uniform_type='3f', uniform_name='edgeColor',
                 value=edge_color))
+
+    shader_to_actor(sq_actor, "vertex", impl_code=vs_impl_code,
+                    decl_code=vs_dec_code)
+    shader_to_actor(sq_actor, "fragment", decl_code=fs_dec_code)
+    shader_to_actor(sq_actor, "fragment", impl_code=fs_impl_code,
+                    block="light")
+
+    return sq_actor
+
+
+def bitmap_labels(
+        centers,
+        labels,
+        colors=(0, 1, 0),
+        scales=1,
+        align='center',
+        x_offset_ratio=1,
+        y_offset_ratio=1,
+        font_size=7,
+        font_path=None,
+        atlas_size=(1024, 1024)
+        ):
+    """Create a bitmap label actor that always faces the camera.
+
+    Parameters
+    ----------
+    centers : ndarray, shape (N, 3)
+    labels  : list
+        list of strings
+    colors : array or ndarray
+    scales : float
+    align : str, {left, right, center}
+    x_offset_ratio : float
+        Percentage of the width to offset the labels on the x axis.
+    y_offset_ratio : float
+        Percentage of the height to offset the labels on the y axis.
+    font_size : int, optional
+        size of the text
+    font_path : str, optional
+        str of path to font file
+    atlas_size : tuple, optional
+        (width, height) of the atlas image to use for the labels.
+        Default is (1024, 1024). You can change this if you change the
+        font size or font path default parameters.
+
+    Returns
+    -------
+    vtkActor
+
+    """
+    img_arr, char2pos = text_tools.create_bitmap_font(
+        font_size=font_size, font_path=font_path,
+        atlas_size=atlas_size, show=False)
+    padding, labels_positions,\
+        uv, relative_sizes = text_tools.get_positions_labels_billboards(
+            labels, centers, char2pos, scales,
+            align=align,
+            x_offset_ratio=x_offset_ratio, y_offset_ratio=y_offset_ratio)
+    # num_chars = labels_positions.shape[0]
+    verts, faces = fp.prim_square()
+    res = fp.repeat_primitive(
+        verts, faces, centers=labels_positions, colors=colors,
+        scales=scales)
+
+    big_verts, big_faces, big_colors, big_centers = res
+    sq_actor = get_actor_from_primitive(big_verts, big_faces, big_colors)
+    sq_actor.GetMapper().SetVBOShiftScaleMethod(False)
+    sq_actor.GetProperty().BackfaceCullingOff()
+
+    attribute_to_actor(sq_actor, big_centers, 'center')
+
+    vs_dec_code = load("billboard_dec.vert")
+    vs_dec_code += f'\n{load("text_billboard_dec.vert")}'
+
+    vs_impl_code = load("text_billboard_impl.vert")
+
+    fs_dec_code = load('billboard_dec.frag')
+    fs_dec_code += f'\n{load("text_billboard_dec.frag")}'
+
+    fs_impl_code = load('billboard_impl.frag')
+    fs_impl_code += f'\n{load("text_billboard_impl.frag")}'
+
+    img_vtk = one_chanel_to_vtk(img_arr)
+    tex = vtk.vtkTexture()
+    tex.SetInputDataObject(img_vtk)
+    tex.Update()
+    sq_actor.GetProperty().SetTexture('charactersTexture', tex)
+    attribute_to_actor(
+        sq_actor,
+        uv,
+        'vUV')
+    attribute_to_actor(
+        sq_actor,
+        relative_sizes,
+        'vRelativeSize')
+    padding = np.repeat(padding, 4, axis=0)
+    attribute_to_actor(
+        sq_actor,
+        padding,
+        'vPadding')
 
     shader_to_actor(sq_actor, "vertex", impl_code=vs_impl_code,
                     decl_code=vs_dec_code)

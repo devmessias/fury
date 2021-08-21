@@ -1,7 +1,11 @@
 import numpy as np
+from io import BytesIO
 import vtk
+import PIL
 from vtk.util import numpy_support
 from scipy.ndimage import map_coordinates
+from matplotlib.mathtext import math_to_image
+from matplotlib.font_manager import FontProperties
 from fury.colormap import line_colors
 
 
@@ -1137,3 +1141,82 @@ def get_bounds(actor):
 
     """
     return actor.GetMapper().GetInput().GetBounds()
+
+
+def render_tex(text, dpi=1000, as_vtktype=False, transparant_bg=True,
+               font_family='sans-serif', style='normal', weight='normal',
+               size=10, fname=None, ):
+    """Render latex equations.
+    
+    Parameters
+    ----------
+    text: str
+        Mathematical equation/text that is to be rendered
+    dpi: int, optional
+        DPI(Dots Per Inch) of the figure. Default: 1000
+    as_vtktype: bool, optional
+        If Ture, `vtkImageData` is returned. Default: False
+    transparant_bg: bool, optional
+        If True, background is set to transparent. Default: True
+    font_family: str, optional
+        Font family. Default: 'dejavusans'
+    style: str, optional
+        Font style.
+        Either 'normal', 'italic' or 'oblique'. Default: 'normal'
+    weight: str, optional
+        Font weight. A numeric value in the range 0-1000
+        or one of 'ultralight', 'light', 'normal', 'regular',
+        'book', 'medium', etc. Default: 'normal'
+    size: int, optional
+        Font size. Either an relative value of 'xx-small',
+        'x-small', 'small', etc or an absolute font size. Default: 10
+    fname: str, optional
+        Absolute path to a font file.
+
+    Returns
+    -------
+    numpy array or `vtkImageData`
+    """
+    props = FontProperties(family=font_family, style=style, weight=weight,
+                           size=size, fname=fname)
+
+    buffer = BytesIO()
+    math_to_image(text, buffer, dpi=dpi, prop=props)
+    buffer.seek(0)
+
+    img = PIL.Image.open(buffer)
+
+    if transparant_bg:
+        img.convert('RGBA')
+        np_arr = np.array(img)
+        white = np.sum(np_arr[:,:,:3], axis=2)
+        mask = np.where(np.isclose(white, 255*3, atol=254), 1, 0)
+        alpha = np.where(mask, 0, np_arr[:,:,-1])
+        np_arr[:,:,-1] = alpha
+    else:
+        np_arr = np.array(img)
+
+    if as_vtktype:
+        vtk_image = vtk.vtkImageData()
+        depth = np_arr.shape[2]
+
+        vtk_image.SetDimensions(np_arr.shape[1], np_arr.shape[0], depth)
+        vtk_image.SetExtent(0, np_arr.shape[1] - 1,
+                            0, np_arr.shape[0] - 1,
+                            0, 0)
+
+        vtk_image.SetSpacing(1.0, 1.0, 1.0)
+        vtk_image.SetOrigin(0.0, 0.0, 0.0)
+
+        np_arr = np.flipud(np_arr)
+        np_arr = np_arr.reshape(np_arr.shape[1] * np_arr.shape[0], depth)
+        vtk_array_type = numpy_support.get_vtk_array_type(np_arr.dtype)
+        uchar_array = numpy_support.numpy_to_vtk(np_arr, deep=True,
+                                                    array_type=vtk_array_type)
+
+        vtk_image.GetPointData().SetScalars(uchar_array)
+        return vtk_image
+
+    return np_arr
+    
+        

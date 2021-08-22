@@ -1246,7 +1246,7 @@ def render_tex(
             (int(height-1), int(width-1), 4))
 
     if not transparant_bg:
-        np_arr = np.delete(np_arr, -1, axis=1)
+        np_arr = np_arr[:, :, :3]
 
     if as_vtktype:
         vtk_image = vtk.vtkImageData()

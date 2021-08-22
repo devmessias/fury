@@ -1229,7 +1229,7 @@ def render_tex(
     buffer = BytesIO()
     fig, width, height = math2image(
         text, buffer, dpi=dpi, format='raw',
-        prop=props, transparent=transparant_bg)
+        prop=props, transparent=True)
     buffer.seek(0)
     np_arr = np.frombuffer(buffer.getvalue(), dtype=np.uint8)
     buffer.close()
@@ -1244,6 +1244,9 @@ def render_tex(
         # the correct widht and height.
         np_arr = np_arr.reshape(
             (int(height-1), int(width-1), 4))
+
+    if not transparant_bg:
+        np_arr = np.delete(np_arr, -1, axis=1)
 
     if as_vtktype:
         vtk_image = vtk.vtkImageData()

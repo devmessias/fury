@@ -108,7 +108,7 @@ scene.add(my_text_actor)
 ###############################################################################
 # The final step ! Visualize and save the result of our creation! Please,
 # switch interactive variable to True if you want to visualize it.
-interactive = False
+interactive = False 
 
 if interactive:
     window.show(scene, size=(600, 600))

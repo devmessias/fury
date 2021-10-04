@@ -32,7 +32,8 @@ from fury.utils import (lines_to_vtk_polydata, set_input, apply_affine,
                         set_polydata_vertices, set_polydata_triangles,
                         shallow_copy, rgb_to_vtk, numpy_to_vtk_matrix,
                         repeat_sources, get_actor_from_primitive,
-                        fix_winding_order, numpy_to_vtk_colors)
+                        fix_winding_order, numpy_to_vtk_colors,
+                        one_chanel_to_vtk)
 from fury import text_tools
 
 

@@ -2880,7 +2880,7 @@ def markers(
     return sq_actor
 
 
-def bitmap_labels(
+def billboard_labels(
         centers,
         labels,
         colors=(0, 1, .5),
